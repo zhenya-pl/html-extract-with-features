@@ -4,9 +4,7 @@ import lxml.html
 from lxml import etree
 import re
 import nltk
-from nltk.tokenize import RegexpTokenizer
 import os
-import html2text
 import csv
 
 def parse_file(file):
@@ -14,13 +12,22 @@ def parse_file(file):
     etree.strip_elements(tree, 'script') #Remove JavaScript
     etree.strip_elements(tree, 'style') #Remove style tags
     page = tree.getroot()
-    body = page.cssselect('body')[0] # Do a check that the list is non-empty
-    return (page, body)
+    pattern = re.compile(r"\s\s+", re.MULTILINE)
+    title = page.find(".//title").text
+    if (title == -1):
+        title = ""
+    else:
+        title = pattern.sub(" ", title)
+    body_list = page.cssselect('body')
+    if (len(body_list) > 0):
+        body = body_list[0]
+    else:
+        body = ""
+    return (title, body)
 
-def find_winner_div(page, body):
+def find_winner_div(body):
     pattern = re.compile(r"\s\s+", re.MULTILINE)
     b_pattern = re.compile(b"\s\s+", re.MULTILINE)
-    title = pattern.sub(" ", page.find(".//title").text)
     article = body.find(".//article")
     if (article is not None):
         # First, check for the tag <article>
@@ -48,22 +55,14 @@ def find_winner_div(page, body):
         max_words = 0
         for div in candidate_divs:
             tokens = tokenizer.tokenize(div.text_content())
-            #print(tokens)
             num_tokens = len(tokenizer.tokenize(div.text_content()))
             if num_tokens > max_words:
                 max_words = num_tokens
                 winner = div
-    #Remove whitespace from the final text
-    winner_text = (etree.tostring(winner)).decode('utf-8')
-    h2tconv = html2text.HTML2Text()
-    h2tconv.ignore_links = True
-    h2tconv.ignore_images = True
-    winner_text = h2tconv.handle(winner_text)
-    winner_text = '\n'.join([' '.join(line.split()) for line in winner_text.splitlines() if line.strip()])
-    return (title, winner_text, winner)
+    return winner
 
 def tag_text (html, text, cur_tags, ti):
-    if (isinstance (html, NavigableString)):
+    if (isinstance (html, NavigableString)): #This is text
         ctags = cur_tags[:]
         text.append((str(html), ctags))
         return (text, cur_tags)
@@ -71,7 +70,7 @@ def tag_text (html, text, cur_tags, ti):
         children = html.contents
         for child in children:
             #Add current tag to list
-            if ((not isinstance (child, NavigableString))
+            if ((not isinstance (child, NavigableString)) #This is an HTML tag
                 and child.name in ti):
                 tag = child.name
                 cur_tags.append(tag)
@@ -84,7 +83,7 @@ def get_sentences(winner_div, tags_to_include):
     wtext = ((etree.tostring(winner_div)).decode('utf-8'))
     div_soup = BeautifulSoup(wtext, "lxml")
     (text, cur_tags) = tag_text(div_soup, [], [], tags_to_include)
-    pattern = re.compile(r'\<(.*?)\>')
+    pattern = re.compile(r'\<(.*?)\>') # Delete leftover HTML
     text = [x for x in text if (not pattern.findall(x[0]) and not x[0].isspace())]
     sentences = []
     for elem in text:
@@ -102,20 +101,13 @@ def write_data(sentences, csv_file):
             row = [s[0]] + s[1]
             writer.writerow(row)
 
-
+#Sample usage
 tags_to_include = ['p', 'em', 'i', 'b', 'strong', 'mark', 'small', 'ins', 'u']
 tokenizer = nltk.data.load('tokenizers/punkt/english.pickle')
-cur_sub_tdir = "Path" #EDIT
-if (os.path.isdir(cur_sub_tdir)):
-    file_list = sorted(os.listdir(cur_sub_tdir))
-    for file in file_list:
-        if (not os.path.isdir(file) and ".html" in file and ".txt" not in file):
-            html_file = os.path.join(cur_sub_tdir, file)
-            file = file.replace('.html', '.txt')
-            csv_file = html_file.replace('.html', '.csv')
-            if (os.path.isfile(html_file)):
-                (page, body) = parse_file(html_file)
-                (title, winner_text, winner) = find_winner_div(page, body)
-                sentences = get_sentences(winner, tags_to_include)
-                sentences = [(title, [])] + sentences
-                write_data(sentences, csv_file)
+html_file = "PATH TO HTML FILE" #Replace
+csv_file = "PATH TO CSV FILE" #Replace
+(title, body) = parse_file(html_file)
+winner = find_winner_div(body)
+sentences = get_sentences(winner, tags_to_include)
+sentences = [(title, [])] + sentences
+write_data(sentences, csv_file)
